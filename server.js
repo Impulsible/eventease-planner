@@ -10,8 +10,14 @@ const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const swaggerUi = require('swagger-ui-express');
 
-// Import Passport configuration
-require('./config/passport');
+// Conditionally load passport configuration
+const hasGoogleCredentials = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
+if (hasGoogleCredentials) {
+  require('./config/passport');
+  console.log('✅ Google OAuth credentials found');
+} else {
+  console.log('⚠️ Google OAuth not configured - /api/auth/google routes will not work');
+}
 
 // Import routes
 const userRoutes = require('./routes/users');
@@ -34,6 +40,7 @@ console.log(`🚀 Starting EventEase API in ${isProduction ? 'PRODUCTION' : 'DEV
 console.log(`📊 Environment: ${process.env.NODE_ENV}`);
 console.log(`🔗 API URL: ${process.env.API_URL}`);
 console.log(`🌍 Frontend URL: ${process.env.FRONTEND_URL}`);
+console.log(`🔐 Google OAuth: ${hasGoogleCredentials ? '✅ Configured' : '❌ Missing'}`);
 
 /* --------------------------------
    GLOBAL MIDDLEWARE
@@ -86,21 +93,39 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* --------------------------------
-   DATABASE CONNECTION
+   DATABASE CONNECTION - FIXED VERSION
 ---------------------------------- */
 const connectDB = async () => {
   try {
+    console.log('🔗 Attempting MongoDB connection...');
+    
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
-      // Remove useNewUrlParser and useUnifiedTopology - deprecated in Mongoose 6+
     });
 
     console.log('✅ MongoDB connected successfully');
-    console.log(`📊 Database: ${conn.connection.db.databaseName}`);
-    console.log(`📍 Host: ${conn.connection.host}`);
-    console.log(`🔌 Port: ${conn.connection.port}`);
+    
+    // Safely get connection information
+    if (conn.connection) {
+      console.log(`📍 Host: ${conn.connection.host || 'Unknown'}`);
+      console.log(`🔌 Port: ${conn.connection.port || 'Unknown'}`);
+      
+      // Try to get database name safely
+      if (conn.connection.db) {
+        console.log(`📊 Database: ${conn.connection.db.databaseName || 'Unknown'}`);
+      } else {
+        console.log('📊 Database connected (name unavailable)');
+      }
+    } else {
+      console.log('📊 MongoDB connected (connection details unavailable)');
+    }
 
+    return conn;
   } catch (err) {
     console.error('❌ MongoDB connection failed:', err.message);
     
@@ -109,19 +134,27 @@ const connectDB = async () => {
       console.log('1. Check if IP is whitelisted in MongoDB Atlas');
       console.log('2. Verify connection string is correct');
       console.log('3. Check network access in MongoDB Atlas');
+      console.log('4. Make sure MONGODB_URI is set in Render environment variables');
+    } else {
+      console.log('💡 Development MongoDB Tips:');
+      console.log('1. Check your .env file has MONGODB_URI');
+      console.log('2. Check if MongoDB is running locally: mongod');
+      console.log('3. Try connecting with MongoDB Compass');
     }
     
     // In production, exit if DB fails
     if (isProduction) {
-      process.exit(1);
+      console.log('⏳ Waiting 5 seconds before exit...');
+      setTimeout(() => process.exit(1), 5000);
     }
+    
+    throw err;
   }
 };
 
-connectDB();
-
 mongoose.connection.on('connected', () => {
   console.log('🔗 Mongoose connected to MongoDB');
+  console.log(`📊 Connection state: ${mongoose.connection.readyState}`);
 });
 
 mongoose.connection.on('error', (err) => {
@@ -148,7 +181,7 @@ app.use('/api/auth', authRoutes);
 const developmentUrl = process.env.API_URL || `http://localhost:${PORT}`;
 const productionUrl = process.env.RENDER_URL || 'https://eventease-api.onrender.com';
 
-// Swagger UI options - using default styling (no custom CSS)
+// Swagger UI options
 const swaggerUiOptions = {
   explorer: true,
   customSiteTitle: `EventEase API - ${isProduction ? 'Production' : 'Development'}`,
@@ -163,8 +196,21 @@ const swaggerUiOptions = {
     operationsSorter: 'method',
     tagsSorter: 'alpha',
     validatorUrl: null,
+    syntaxHighlight: {
+      activate: true,
+      theme: 'monokai'
+    },
+    displayOperationId: false,
+    defaultModelsExpandDepth: 2,
+    defaultModelExpandDepth: 2,
+    supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch']
   }
 };
+
+// Serve Swagger JSON endpoint
+app.get('/api-docs/swagger.json', (req, res) => {
+  res.json(swaggerSpecs);
+});
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, swaggerUiOptions));
 
@@ -172,6 +218,11 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, swaggerUiOpt
    HEALTH & INFO ENDPOINTS
 ---------------------------------- */
 app.get('/', (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const dbStatusText = dbStatus === 1 ? 'connected' : 
+                       dbStatus === 2 ? 'connecting' :
+                       dbStatus === 3 ? 'disconnecting' : 'disconnected';
+  
   res.json({
     success: true,
     message: `EventEase API is running in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode`,
@@ -186,13 +237,15 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     database: {
-      status: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-      name: mongoose.connection.db?.databaseName || 'unknown'
+      status: dbStatusText,
+      readyState: dbStatus
     }
   });
 });
 
 app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  
   const health = {
     success: true,
     status: 'running',
@@ -200,7 +253,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    database: dbStatus,
+    google_oauth: hasGoogleCredentials ? 'configured' : 'not configured',
     render: isProduction ? 'deployed' : 'local',
     version: '1.0.0'
   };
@@ -217,6 +271,24 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/api/info', (req, res) => {
+  const features = [
+    '✅ Users CRUD with Enhanced Validation',
+    '✅ Events CRUD with Enhanced Validation',
+    '✅ Invitations Collection (Week 06)',
+    '✅ RSVPs Collection (Week 06)',
+    '✅ JWT Token Authentication',
+    '✅ Unit Testing with Jest',
+    '✅ MongoDB Atlas Integration',
+    '✅ Swagger API Documentation',
+    '✅ Deployment on Render'
+  ];
+  
+  if (hasGoogleCredentials) {
+    features.splice(4, 0, '✅ Google OAuth 2.0 Authentication');
+  } else {
+    features.splice(4, 0, '⚠️ Google OAuth (configure environment variables)');
+  }
+  
   res.json({
     success: true,
     message: 'EventEase API - Week 06 Complete Implementation',
@@ -226,18 +298,7 @@ app.get('/api/info', (req, res) => {
     deployed_on: isProduction ? 'Render' : 'Local',
     production_url: 'https://eventease-api.onrender.com',
     documentation: '/api-docs',
-    features: [
-      '✅ Users CRUD with Enhanced Validation',
-      '✅ Events CRUD with Enhanced Validation',
-      '✅ Invitations Collection (Week 06)',
-      '✅ RSVPs Collection (Week 06)',
-      '✅ Google OAuth 2.0 Authentication',
-      '✅ JWT Token Authentication',
-      '✅ Unit Testing with Jest',
-      '✅ MongoDB Atlas Integration',
-      '✅ Swagger API Documentation',
-      '✅ Deployment on Render'
-    ],
+    features: features,
     endpoints: {
       documentation: '/api-docs',
       health: '/health',
@@ -303,34 +364,40 @@ app.use((err, req, res, next) => {
 /* --------------------------------
    START SERVER 
 ---------------------------------- */
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`\n🎉 ============================================`);
-    console.log(`   EventEase API Server Started`);
-    console.log(`   ============================================`);
-    console.log(`   🚀 Server: http://localhost:${PORT}`);
-    console.log(`   📚 Docs: http://localhost:${PORT}/api-docs`);
-    console.log(`   🏥 Health: http://localhost:${PORT}/health`);
-    console.log(`   ℹ️  Info: http://localhost:${PORT}/api/info`);
-    console.log(`   🌍 Environment: ${process.env.NODE_ENV}`);
-    console.log(`   🔐 Google OAuth: ${process.env.GOOGLE_CLIENT_ID ? '✅ Configured' : '❌ Missing'}`);
-    console.log(`   📊 Database: ✅ Connected`);
-    console.log(`   🎯 Week 06: ✅ Complete`);
+async function startServer() {
+  try {
+    await connectDB();
     
-    if (isProduction) {
-      console.log(`   🚀 Production URL: https://eventease-api.onrender.com`);
-      console.log(`   ☁️  Deployed on: Render.com`);
+    app.listen(PORT, () => {
+      console.log(`\n🎉 ============================================`);
+      console.log(`   EventEase API Server Started`);
+      console.log(`   ============================================`);
+      console.log(`   🚀 Server: http://localhost:${PORT}`);
+      console.log(`   📚 Docs: http://localhost:${PORT}/api-docs`);
+      console.log(`   🏥 Health: http://localhost:${PORT}/health`);
+      console.log(`   ℹ️  Info: http://localhost:${PORT}/api/info`);
+      console.log(`   🌍 Environment: ${process.env.NODE_ENV}`);
+      console.log(`   🔐 Google OAuth: ${hasGoogleCredentials ? '✅ Configured' : '❌ Missing'}`);
+      console.log(`   📊 Database: ${mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected'}`);
+      console.log(`   🎯 Week 06: ✅ Complete`);
+      
+      if (isProduction) {
+        console.log(`   🚀 Production URL: https://eventease-api.onrender.com`);
+        console.log(`   ☁️  Deployed on: Render.com`);
+      }
+      
+      console.log(`   ============================================\n`);
+    });
+  } catch (err) {
+    console.error('❌ Failed to start server:', err.message);
+    if (!isProduction) {
+      console.log('💡 Development Tips:');
+      console.log('1. Check if MongoDB is running locally: mongod');
+      console.log('2. Check your .env file MONGODB_URI');
+      console.log('3. For Atlas: Check IP whitelist and network access');
     }
-    
-    console.log(`   ============================================\n`);
-  });
-}).catch(err => {
-  console.error('❌ Failed to connect to database. Server not started.');
-  if (!isProduction) {
-    console.log('💡 Development Tips:');
-    console.log('1. Check if MongoDB is running locally: mongod');
-    console.log('2. Check your .env file MONGODB_URI');
-    console.log('3. For Atlas: Check IP whitelist and network access');
+    process.exit(1);
   }
-  process.exit(1);
-});
+}
+
+startServer();

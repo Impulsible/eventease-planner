@@ -8,6 +8,7 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 const developmentUrl = process.env.API_URL || `http://localhost:${process.env.PORT || 3000}`;
 const productionUrl = process.env.RENDER_URL || 'https://eventease-api.onrender.com';
 
+
 const options = {
   definition: {
     openapi: '3.0.0',

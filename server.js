@@ -52,9 +52,23 @@ app.use(helmet({
 
 // CORS configuration based on environment
 const corsOptions = {
-  origin: isProduction 
-    ? process.env.FRONTEND_URL 
-    : 'http://localhost:3000',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://eventease-planner.onrender.com',
+      'https://eventease-api.onrender.com' // Keep both for safety
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -93,7 +107,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* --------------------------------
-   DATABASE CONNECTION - FIXED VERSION
+   DATABASE CONNECTION
 ---------------------------------- */
 const connectDB = async () => {
   try {
@@ -177,10 +191,6 @@ app.use('/api/auth', authRoutes);
 /* --------------------------------
    SWAGGER DOCUMENTATION
 ---------------------------------- */
-// Base URLs
-const developmentUrl = process.env.API_URL || `http://localhost:${PORT}`;
-const productionUrl = process.env.RENDER_URL || 'https://eventease-api.onrender.com';
-
 // Swagger UI options
 const swaggerUiOptions = {
   explorer: true,
@@ -223,23 +233,33 @@ app.get('/', (req, res) => {
                        dbStatus === 2 ? 'connecting' :
                        dbStatus === 3 ? 'disconnecting' : 'disconnected';
   
+  const productionUrl = 'https://eventease-planner.onrender.com'; // CORRECTED URL
+  
   res.json({
     success: true,
     message: `EventEase API is running in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode`,
     environment: process.env.NODE_ENV,
-    version: '1.0.0',
+    version: '2.0.0',
     week: 6,
     deployed_on: isProduction ? 'Render' : 'Local',
     documentation: '/api-docs',
     health_check: '/health',
     api_info: '/api/info',
-    production_url: 'https://eventease-api.onrender.com',
+    production_url: productionUrl,
+    current_url: isProduction ? productionUrl : `http://localhost:${PORT}`,
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     database: {
       status: dbStatusText,
       readyState: dbStatus
-    }
+    },
+    features: [
+      '✅ 4 Collections with Full CRUD',
+      '✅ Enhanced Data Validation',
+      '✅ Google OAuth Authentication',
+      '✅ Unit Testing with Jest',
+      '✅ Swagger Documentation'
+    ]
   });
 });
 
@@ -256,13 +276,13 @@ app.get('/health', (req, res) => {
     database: dbStatus,
     google_oauth: hasGoogleCredentials ? 'configured' : 'not configured',
     render: isProduction ? 'deployed' : 'local',
-    version: '1.0.0'
+    version: '2.0.0'
   };
 
   if (isProduction) {
     health.deployment = {
-      url: process.env.RENDER_URL,
-      service: process.env.RENDER_SERVICE_NAME,
+      url: 'https://eventease-planner.onrender.com', // CORRECTED URL
+      service: 'eventease-planner',
       commit: process.env.RENDER_GIT_COMMIT?.substring(0, 7) || 'unknown'
     };
   }
@@ -289,14 +309,17 @@ app.get('/api/info', (req, res) => {
     features.splice(4, 0, '⚠️ Google OAuth (configure environment variables)');
   }
   
+  const productionUrl = 'https://eventease-planner.onrender.com'; // CORRECTED URL
+  
   res.json({
     success: true,
     message: 'EventEase API - Week 06 Complete Implementation',
-    version: '1.0.0',
+    version: '2.0.0',
     week: 6,
     environment: process.env.NODE_ENV,
     deployed_on: isProduction ? 'Render' : 'Local',
-    production_url: 'https://eventease-api.onrender.com',
+    production_url: productionUrl,
+    current_url: isProduction ? productionUrl : `http://localhost:${PORT}`,
     documentation: '/api-docs',
     features: features,
     endpoints: {
@@ -382,7 +405,7 @@ async function startServer() {
       console.log(`   🎯 Week 06: ✅ Complete`);
       
       if (isProduction) {
-        console.log(`   🚀 Production URL: https://eventease-api.onrender.com`);
+        console.log(`   🚀 Production URL: https://eventease-planner.onrender.com`); // CORRECTED
         console.log(`   ☁️  Deployed on: Render.com`);
       }
       

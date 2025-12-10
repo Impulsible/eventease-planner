@@ -10,22 +10,34 @@ const generateToken = (id) => {
   });
 };
 
+// Determine callback URL based on environment
+const getCallbackURL = () => {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.GOOGLE_PRODUCTION_CALLBACK_URL || 
+           'https://eventease-planner.onrender.com/api/auth/google/callback';
+  }
+  return process.env.GOOGLE_CALLBACK_URL || 
+         'http://localhost:3000/api/auth/google/callback';
+};
+
+console.log('🔐 Passport Config Initialized');
+console.log('🌍 Environment:', process.env.NODE_ENV);
+console.log('🔗 Callback URL:', getCallbackURL());
+console.log('📱 Google Client ID:', process.env.GOOGLE_CLIENT_ID ? 'Configured' : 'Missing');
+
 // Passport Google OAuth Strategy
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback',
+      callbackURL: getCallbackURL(),
       passReqToCallback: true
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {
-        console.log('🔐 Google OAuth Profile Received:', {
-          id: profile.id,
-          email: profile.emails?.[0]?.value,
-          name: profile.displayName
-        });
+        console.log('🎯 Google OAuth Profile Received:', profile.id);
+        console.log('📧 Email:', profile.emails?.[0]?.value);
 
         // Check if user already exists with Google ID
         let user = await User.findOne({ googleId: profile.id });
@@ -48,10 +60,11 @@ passport.use(
               googleId: profile.id,
               name: profile.displayName,
               email: profile.emails[0].value,
-              password: `google-auth-${Date.now()}`, // Avoid static dummy password
-              role: 'guest', // Default role
+              password: `google-auth-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              role: 'guest',
               isVerified: true,
-              avatar: profile.photos[0]?.value
+              avatar: profile.photos[0]?.value,
+              authMethod: 'google'
             });
 
             console.log('✅ Created new user with Google OAuth:', user.email);
@@ -65,9 +78,10 @@ passport.use(
         // Attach JWT token for immediate API use
         user.token = generateToken(user._id);
 
+        console.log('🎉 Google OAuth successful for:', user.email);
         return done(null, user);
       } catch (error) {
-        console.error('❌ Google OAuth error:', error);
+        console.error('❌ Google OAuth error:', error.message);
         return done(error, null);
       }
     }
@@ -85,6 +99,7 @@ passport.deserializeUser(async (id, done) => {
     const user = await User.findById(id);
     done(null, user);
   } catch (error) {
+    console.error('❌ Deserialize error:', error);
     done(error, null);
   }
 });

@@ -2,43 +2,60 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  name: {
+  googleId: {
     type: String,
-    required: [true, 'Name is required'],
-    trim: true
+    sparse: true,
+    unique: true
   },
   email: {
     type: String,
-    required: [true, 'Email is required'],
+    required: true,
     unique: true,
     lowercase: true,
     trim: true
   },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
   password: {
     type: String,
-    required: [true, 'Password is required'],
-    minlength: 6
+    minlength: 6,
+    select: false // Don't return password by default
+  },
+  avatar: {
+    type: String
   },
   role: {
     type: String,
-    enum: ['organizer', 'guest'],
-    default: 'guest'
+    enum: ['user', 'admin'],
+    default: 'user'
+  },
+  isVerified: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
 });
 
-// FIXED: Simple password hashing without next() issues
-userSchema.pre('save', async function() {
-  // Only run this function if password was actually modified
-  if (!this.isModified('password')) return;
+// Hash password before saving
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
   
-  // Hash the password with cost of 12
-  this.password = await bcrypt.hash(this.password, 12);
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Compare password method
-userSchema.methods.correctPassword = async function(candidatePassword) {
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 

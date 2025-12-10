@@ -30,7 +30,7 @@ const authRoutes = require('./routes/auth');
 const swaggerSpecs = require('./docs/swagger');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000; // CHANGED: Default to 5000 instead of 3000
 
 // Determine environment
 const isProduction = process.env.NODE_ENV === 'production';
@@ -50,35 +50,45 @@ app.use(helmet({
   crossOriginEmbedderPolicy: isProduction,
 }));
 
-// CORS configuration based on environment
+// CORS configuration - UPDATED FOR PORT 5000
 const corsOptions = {
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, postman)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:3001',
+      'http://localhost:5000',      // EventEase API on port 5000
+      'http://localhost:3000',      // Your Book API on port 3000
+      'http://localhost:3001',      // Frontend
+      'http://localhost:5173',      // Vite dev server
+      'https://localhost:5000',     // HTTPS for EventEase
+      'https://localhost:3000',     // HTTPS for Book API
+      'https://localhost:3001',     // HTTPS frontend
       'https://eventease-planner.onrender.com',
-      'https://eventease-api.onrender.com' // Keep both for safety
+      'https://accounts.google.com'  // Allow Google OAuth
     ];
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Check if origin is allowed or if it's a Google OAuth request
+    if (allowedOrigins.includes(origin) || 
+        origin.includes('accounts.google.com') ||
+        origin.includes('google.com')) {
       callback(null, true);
     } else {
+      console.warn('⚠️ CORS blocked origin:', origin);
       callback(new Error(`Origin ${origin} not allowed by CORS`));
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cookie', 'Set-Cookie'],
+  exposedHeaders: ['Set-Cookie']
 };
-app.use(cors(corsOptions));
 
-app.use(morgan(isProduction ? 'combined' : 'dev'));
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(morgan(isProduction ? 'combined' : 'dev'));
 
 /* --------------------------------
    SESSION CONFIGURATION
@@ -233,7 +243,7 @@ app.get('/', (req, res) => {
                        dbStatus === 2 ? 'connecting' :
                        dbStatus === 3 ? 'disconnecting' : 'disconnected';
   
-  const productionUrl = 'https://eventease-planner.onrender.com'; // CORRECTED URL
+  const productionUrl = 'https://eventease-planner.onrender.com';
   
   res.json({
     success: true,
@@ -281,7 +291,7 @@ app.get('/health', (req, res) => {
 
   if (isProduction) {
     health.deployment = {
-      url: 'https://eventease-planner.onrender.com', // CORRECTED URL
+      url: 'https://eventease-planner.onrender.com',
       service: 'eventease-planner',
       commit: process.env.RENDER_GIT_COMMIT?.substring(0, 7) || 'unknown'
     };
@@ -309,7 +319,7 @@ app.get('/api/info', (req, res) => {
     features.splice(4, 0, '⚠️ Google OAuth (configure environment variables)');
   }
   
-  const productionUrl = 'https://eventease-planner.onrender.com'; // CORRECTED URL
+  const productionUrl = 'https://eventease-planner.onrender.com';
   
   res.json({
     success: true,
@@ -405,11 +415,21 @@ async function startServer() {
       console.log(`   🎯 Week 06: ✅ Complete`);
       
       if (isProduction) {
-        console.log(`   🚀 Production URL: https://eventease-planner.onrender.com`); // CORRECTED
+        console.log(`   🚀 Production URL: https://eventease-planner.onrender.com`);
         console.log(`   ☁️  Deployed on: Render.com`);
       }
       
       console.log(`   ============================================\n`);
+      
+      // ADDED: Print helpful URLs
+      console.log(`🔗 Quick Links:`);
+      console.log(`   👉 Test Auth: http://localhost:${PORT}/api/auth/test`);
+      console.log(`   👉 Google Login: http://localhost:${PORT}/api/auth/google`);
+      console.log(`   👉 Manual Login: http://localhost:${PORT}/api/auth/login`);
+      console.log(`   👉 Logout: http://localhost:${PORT}/api/auth/logout`);
+      console.log(`   👉 Health Check: http://localhost:${PORT}/health`);
+      console.log(`   👉 Swagger Docs: http://localhost:${PORT}/api-docs`);
+      console.log(``);
     });
   } catch (err) {
     console.error('❌ Failed to start server:', err.message);

@@ -1,107 +1,82 @@
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
 
-// Generate JWT token
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE || '30d'
-  });
-};
+console.log('🔐 Loading passport configuration...');
+console.log('GOOGLE_CLIENT_ID exists:', !!process.env.GOOGLE_CLIENT_ID);
+console.log('GOOGLE_CLIENT_SECRET exists:', !!process.env.GOOGLE_CLIENT_SECRET);
 
-// Determine callback URL based on environment
+// Get callback URL based on environment - UPDATED FOR PORT 5000
 const getCallbackURL = () => {
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.GOOGLE_PRODUCTION_CALLBACK_URL || 
-           'https://eventease-planner.onrender.com/api/auth/google/callback';
-  }
-  return process.env.GOOGLE_CALLBACK_URL || 
-         'http://localhost:3000/api/auth/google/callback';
+  const isProduction = process.env.NODE_ENV === 'production';
+  const baseUrl = isProduction ? 
+    'https://eventease-planner.onrender.com' : 
+    `http://localhost:${process.env.PORT || 5000}`;  // CHANGED: Use PORT from env
+  
+  return `${baseUrl}/api/auth/google/callback`;
 };
 
-console.log('🔐 Passport Config Initialized');
-console.log('🌍 Environment:', process.env.NODE_ENV);
-console.log('🔗 Callback URL:', getCallbackURL());
-console.log('📱 Google Client ID:', process.env.GOOGLE_CLIENT_ID ? 'Configured' : 'Missing');
+const callbackURL = getCallbackURL();
+console.log('🌐 Callback URL:', callbackURL);
 
-// Passport Google OAuth Strategy
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: getCallbackURL(),
-      passReqToCallback: true
-    },
-    async (req, accessToken, refreshToken, profile, done) => {
-      try {
-        console.log('🎯 Google OAuth Profile Received:', profile.id);
-        console.log('📧 Email:', profile.emails?.[0]?.value);
-
-        // Check if user already exists with Google ID
-        let user = await User.findOne({ googleId: profile.id });
-
-        if (!user) {
-          // Check if user exists with same email
-          user = await User.findOne({ email: profile.emails[0].value });
-
-          if (user) {
-            // Link Google account to existing user
-            user.googleId = profile.id;
-            user.isVerified = true;
-            user.avatar = profile.photos[0]?.value || user.avatar;
-
-            console.log('✅ Linked Google account to existing user:', user.email);
-            await user.save();
-          } else {
-            // Create new user
-            user = await User.create({
-              googleId: profile.id,
-              name: profile.displayName,
-              email: profile.emails[0].value,
-              password: `google-auth-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              role: 'guest',
-              isVerified: true,
-              avatar: profile.photos[0]?.value,
-              authMethod: 'google'
-            });
-
-            console.log('✅ Created new user with Google OAuth:', user.email);
-          }
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: callbackURL,
+    proxy: true
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      console.log('📨 Received Google profile for:', profile.displayName);
+      
+      // Try to find user by Google ID first
+      let user = await User.findOne({ googleId: profile.id });
+      
+      if (!user) {
+        // If not found by Google ID, try by email
+        user = await User.findOne({ email: profile.emails[0].value });
+        
+        if (user) {
+          // Update existing user with Google ID
+          user.googleId = profile.id;
+          await user.save();
+          console.log('🔄 Updated existing user with Google ID:', user.email);
+        } else {
+          // Create new user
+          user = await User.create({
+            googleId: profile.id,
+            email: profile.emails[0].value,
+            name: profile.displayName,
+            avatar: profile.photos?.[0]?.value,
+            role: 'user'
+          });
+          console.log('👤 Created new user:', user.email);
         }
-
-        // Update last login timestamp
-        user.lastLogin = new Date();
-        await user.save();
-
-        // Attach JWT token for immediate API use
-        user.token = generateToken(user._id);
-
-        console.log('🎉 Google OAuth successful for:', user.email);
-        return done(null, user);
-      } catch (error) {
-        console.error('❌ Google OAuth error:', error.message);
-        return done(error, null);
+      } else {
+        console.log('✅ Found existing Google user:', user.email);
       }
+      
+      return done(null, user);
+    } catch (error) {
+      console.error('❌ Passport strategy error:', error);
+      return done(error, null);
     }
-  )
-);
+  }
+));
 
-// Serialize user for session
+// Serialize/Deserialize for sessions
 passport.serializeUser((user, done) => {
   done(null, user.id);
 });
 
-// Deserialize user from session
 passport.deserializeUser(async (id, done) => {
   try {
     const user = await User.findById(id);
     done(null, user);
   } catch (error) {
-    console.error('❌ Deserialize error:', error);
     done(error, null);
   }
 });
 
+console.log('✅ Passport configured successfully!');
 module.exports = passport;
